@@ -1,0 +1,17 @@
+[
+  { "id": "tribune", "name": "The Tribune", "domain": "tribuneindia.com" },
+  { "id": "hindu", "name": "The Hindu", "domain": "thehindu.com" },
+  { "id": "indianexpress", "name": "The Indian Express", "domain": "indianexpress.com" },
+  { "id": "toi", "name": "The Times of India", "domain": "timesofindia.indiatimes.com" },
+  { "id": "ht", "name": "Hindustan Times", "domain": "hindustantimes.com" },
+  { "id": "deccanherald", "name": "Deccan Herald", "domain": "deccanherald.com" },
+  { "id": "telegraph", "name": "The Telegraph", "domain": "telegraphindia.com" },
+  { "id": "newindianexpress", "name": "The New Indian Express", "domain": "newindianexpress.com" },
+  { "id": "deccanchronicle", "name": "Deccan Chronicle", "domain": "deccanchronicle.com" },
+  { "id": "statesman", "name": "The Statesman", "domain": "thestatesman.com" },
+  { "id": "freepressjournal", "name": "Free Press Journal", "domain": "freepressjournal.in" },
+  { "id": "businessstandard", "name": "Business Standard", "domain": "business-standard.com" },
+  { "id": "mint", "name": "Mint", "domain": "livemint.com" },
+  { "id": "pioneer", "name": "The Pioneer", "domain": "dailypioneer.com" },
+  { "id": "assamtribune", "name": "The Assam Tribune", "domain": "assamtribune.com" }
+]
