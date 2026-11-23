@@ -1,4 +1,4 @@
-# India Political & Opposition News Scraper
+# Ballotix News Scrapper.
 
 A full-stack, solo-developer news scraping and filtering dashboard built with **Node.js (Express)** and **React (Vite + Tailwind CSS)**. It collects political statements, social media posts by Indian politicians, and opposition rebuttals across **15 major Indian English newspapers**, automatically geo-tags every article across all **28 States and 8 Union Territories**, and exports clean `.TXT` reports with 60–70 word summaries.
 

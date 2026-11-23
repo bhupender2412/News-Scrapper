@@ -3,8 +3,16 @@ import * as cheerio from "cheerio";
 import fs from "fs";
 import Parser from "rss-parser";
 import pkg from "google-news-url-decoder";
-import { filterPoliticalArticle } from "../utils/politicalFilter.js";
+import {
+  classifyArticle,
+  getTopicSearchQuery,
+  isNoiseArticle,
+} from "../utils/topicFilter.js";
 import { extractLocation } from "../utils/locationExtractor.js";
+import {
+  loadArchivedArticles,
+  saveArticlesToArchive,
+} from "../utils/newsArchive.js";
 
 const { GoogleDecoder } = pkg;
 const decoder = new GoogleDecoder();
@@ -13,6 +21,9 @@ const parser = new Parser();
 const sourcesPath = new URL("../data/newsSources.json", import.meta.url);
 export const NEWS_SOURCES = JSON.parse(fs.readFileSync(sourcesPath, "utf-8"));
 
+const locationsPath = new URL("../data/indiaLocations.json", import.meta.url);
+const INDIA_LOCATIONS = JSON.parse(fs.readFileSync(locationsPath, "utf-8"));
+
 const BROWSER_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -20,41 +31,157 @@ const BROWSER_HEADERS = {
   "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
 };
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const INDIA_REGIONS = [
+  {
+    name: "North",
+    query:
+      '(Punjab OR Haryana OR "Himachal Pradesh" OR Delhi OR "Uttar Pradesh" OR Uttarakhand)',
+  },
+  {
+    name: "West",
+    query: "(Maharashtra OR Gujarat OR Rajasthan OR Goa)",
+  },
+  {
+    name: "South",
+    query:
+      '(Karnataka OR "Tamil Nadu" OR Kerala OR "Andhra Pradesh" OR Telangana)',
+  },
+  {
+    name: "East",
+    query: '("West Bengal" OR Bihar OR Jharkhand OR Odisha)',
+  },
+  {
+    name: "Central",
+    query: '("Madhya Pradesh" OR Chhattisgarh)',
+  },
+  {
+    name: "North-East",
+    query:
+      "(Assam OR Manipur OR Meghalaya OR Tripura OR Nagaland OR Mizoram OR Sikkim)",
+  },
+];
 
-function addOneDay(dateStr) {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + 1);
+async function runWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const current = nextIndex++;
+      try {
+        results[current] = await worker(items[current], current);
+      } catch {
+        results[current] = null;
+      }
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => runWorker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+function parsePublishDateTime(pubDateStr) {
+  const parsed = pubDateStr ? new Date(pubDateStr) : new Date();
+  const validDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+
+  const dateFormatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const timeFormatter = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  return {
+    publishedAt: validDate.toISOString(),
+    date: dateFormatter.format(validDate),
+    time: `${timeFormatter.format(validDate).toUpperCase()} IST`,
+  };
+}
+
+function todayStr() {
+  return parsePublishDateTime(new Date()).date;
+}
+
+function addDays(dateStr, days) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().split("T")[0];
 }
 
-function buildSearchUrl(domain, { fromDate, toDate, state, city, keyword }) {
-  const queryParts = [`site:${domain}`];
+function buildGoogleNewsUrl({
+  domain = "",
+  topic = "all",
+  fromDate = "",
+  toDate = "",
+  state = "",
+  city = "",
+  keyword = "",
+  regionQuery = "",
+}) {
+  const queryParts = [];
+
+  if (domain) queryParts.push(`site:${domain}`);
 
   if (keyword && keyword.trim()) {
-    queryParts.push(`"${keyword.trim()}"`);
+    queryParts.push(keyword.trim());
   } else {
-    queryParts.push("(BJP OR Congress OR AAP OR CM OR PM OR Minister OR Opposition OR MLA OR MP)");
+    queryParts.push(getTopicSearchQuery(topic));
   }
 
-  if (city && city.trim()) {
+  if (regionQuery) {
+    queryParts.push(regionQuery);
+  } else if (city && city.trim()) {
     queryParts.push(`"${city.trim()}"`);
   } else if (state && state.trim() && state !== "National") {
     queryParts.push(`"${state.trim()}"`);
   }
 
-  if (fromDate) {
-    queryParts.push(`after:${fromDate}`);
-  }
-  if (toDate) {
-    queryParts.push(`before:${addOneDay(toDate)}`);
+  const today = todayStr();
+
+  if (fromDate === today && (!toDate || toDate === today)) {
+    queryParts.push("when:2d");
+  } else if (fromDate || toDate) {
+    if (fromDate) queryParts.push(`after:${addDays(fromDate, -1)}`);
+    if (toDate) queryParts.push(`before:${addDays(toDate, 1)}`);
+  } else if (!keyword || !keyword.trim()) {
+    // Prevent random 2-3 year old articles during general "All Time" browsing
+    queryParts.push("when:30d");
   }
 
   const encodedQuery = encodeURIComponent(queryParts.join(" "));
   return `https://news.google.com/rss/search?q=${encodedQuery}&hl=en-IN&gl=IN&ceid=IN:en`;
 }
 
-// Extract structured articleBody from JSON-LD
+function matchesRequestedState(headline, content, targetState) {
+  if (!targetState || targetState === "National") return true;
+  const combined = `${headline} ${content}`.toLowerCase();
+  if (combined.includes(targetState.toLowerCase())) return true;
+
+  const cities = INDIA_LOCATIONS[targetState] || [];
+  return cities.some((city) => combined.includes(city.toLowerCase()));
+}
+
+function cleanHtmlText(raw = "") {
+  if (!raw) return "";
+  // Pass 1: decode escaped entities (&lt;p&gt; -> <p>, &amp;nbsp; -> &nbsp;)
+  const decoded = cheerio.load(`<div>${raw}</div>`)("div").text();
+  // Pass 2: add spacing at block tags and strip HTML tags
+  const withSpaces = decoded.replace(/<\/(p|div|br|li)>/gi, " ");
+  const stripped = cheerio.load(`<div>${withSpaces}</div>`)("div").text();
+  return stripped.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function extractJsonLdBody($) {
   let bodyText = "";
 
@@ -71,8 +198,12 @@ function extractJsonLdBody($) {
         : [parsed];
 
       for (const node of nodes) {
-        if (node && typeof node.articleBody === "string" && node.articleBody.trim().length > 150) {
-          bodyText = node.articleBody.replace(/\s+/g, " ").trim();
+        if (
+          node &&
+          typeof node.articleBody === "string" &&
+          node.articleBody.trim().length > 150
+        ) {
+          bodyText = cleanHtmlText(node.articleBody);
           break;
         }
       }
@@ -84,22 +215,20 @@ function extractJsonLdBody($) {
   return bodyText;
 }
 
-// Fallback reader when a newspaper blocks direct axios requests
 async function fetchViaReaderFallback(realUrl) {
   try {
     const { data: text } = await axios.get(`https://r.jina.ai/${realUrl}`, {
       headers: { Accept: "text/plain" },
-      timeout: 12000,
+      timeout: 4500,
     });
 
     if (typeof text !== "string") return "";
 
-    // Keep clean prose paragraphs, skip markdown headers, links, and metadata lines
     const lines = text
       .split(/\n+/)
       .map((line) =>
         line
-          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // strip markdown links
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
           .replace(/[*_`>#]/g, "")
           .replace(/\s+/g, " ")
           .trim()
@@ -112,71 +241,126 @@ async function fetchViaReaderFallback(realUrl) {
           )
       );
 
-    return lines.slice(0, 6).join("\n\n");
+    return lines.slice(0, 5).join("\n\n");
   } catch {
     return "";
   }
 }
 
-// Fetch the real newspaper page and extract clean article content
 async function fetchArticleBody(realUrl) {
   try {
     const { data: html } = await axios.get(realUrl, {
       headers: BROWSER_HEADERS,
-      timeout: 10000,
-      maxRedirects: 5,
+      timeout: 4000,
+      maxRedirects: 4,
     });
 
     if (typeof html === "string") {
       const $ = cheerio.load(html);
 
-      // 1. JSON-LD articleBody
       const jsonLdBody = extractJsonLdBody($);
-      if (jsonLdBody.length >= 250) {
-        return jsonLdBody;
-      }
+      if (jsonLdBody.length >= 250) return jsonLdBody;
 
-      // 2. HTML paragraphs
       $(
         "script, style, noscript, iframe, header, footer, nav, aside, .ad, .advertisement, .related-news, .also-read, .comments"
       ).remove();
 
       const paragraphs = [];
-      $("article p, .story-desc p, .article-body p, .content p, main p, p").each((_, el) => {
-        const text = $(el).text().replace(/\s+/g, " ").trim();
-        if (
-          text.length >= 60 &&
-          !/^(read also|also read|subscribe|follow us|copyright|all rights reserved|sign up|download)/i.test(
-            text
-          )
-        ) {
-          paragraphs.push(text);
+      $("article p, .story-desc p, .article-body p, .content p, main p, p").each(
+        (_, el) => {
+          const text = $(el).text().replace(/\s+/g, " ").trim();
+          if (
+            text.length >= 60 &&
+            !/^(read also|also read|subscribe|follow us|copyright|all rights reserved|sign up|download)/i.test(
+              text
+            )
+          ) {
+            paragraphs.push(text);
+          }
         }
-      });
+      );
 
-      const uniqueParagraphs = [...new Set(paragraphs)];
-      const joined = uniqueParagraphs.slice(0, 8).join("\n\n");
-      if (joined.length >= 250) {
-        return joined;
-      }
+      const joined = [...new Set(paragraphs)].slice(0, 6).join("\n\n");
+      if (joined.length >= 250) return joined;
     }
   } catch {
-    // Direct fetch blocked; fall through to reader fallback
+    // Fall through to reader fallback
   }
 
-  // 3. Reader fallback for publishers that block direct scraping
   return await fetchViaReaderFallback(realUrl);
 }
 
-async function scrapeSingleSource(source, options) {
-  const { fromDate = "", toDate = "", limitPerSource = 25 } = options;
-  const feedUrl = buildSearchUrl(source.domain, options);
+async function fetchDirectRssFeed(feedUrl, sourceName, options) {
+  const {
+    fromDate = "",
+    toDate = "",
+    state = "",
+    city = "",
+    keyword = "",
+    limitPerFeed = 12,
+  } = options;
   const candidates = [];
 
   try {
     const { data: xml } = await axios.get(feedUrl, {
       headers: BROWSER_HEADERS,
-      timeout: 15000,
+      timeout: 5000,
+    });
+
+    const feed = await parser.parseString(xml);
+    const items = (feed.items || []).slice(0, limitPerFeed);
+
+    for (const item of items) {
+      if (!item.link) continue;
+
+      const headline = (item.title || "").trim();
+      const snippet = cleanHtmlText(item.contentSnippet || item.summary || "");
+      const dt = parsePublishDateTime(item.pubDate);
+
+      if (fromDate && dt.date < fromDate) continue;
+      if (toDate && dt.date > toDate) continue;
+      if (isNoiseArticle(headline, keyword)) continue;
+
+      if (state && !matchesRequestedState(headline, snippet, state)) continue;
+      if (
+        city &&
+        !`${headline} ${snippet}`.toLowerCase().includes(city.toLowerCase())
+      ) {
+        continue;
+      }
+
+      candidates.push({
+        headline,
+        source: sourceName,
+        date: dt.date,
+        time: dt.time,
+        publishedAt: dt.publishedAt,
+        rawUrl: item.link,
+        isGoogleLink: false,
+        fromTargetedSearch: false,
+        snippet,
+      });
+    }
+  } catch {
+    // Skip unreachable direct RSS feed
+  }
+
+  return candidates;
+}
+
+async function fetchGoogleRssTask(task, options) {
+  const {
+    fromDate = "",
+    toDate = "",
+    keyword = "",
+    limitPerSource = 12,
+  } = options;
+  const candidates = [];
+
+  try {
+    const { data: xml } = await axios.get(task.url, {
+      headers: BROWSER_HEADERS,
+      timeout: 6000,
     });
 
     const feed = await parser.parseString(xml);
@@ -186,115 +370,258 @@ async function scrapeSingleSource(source, options) {
       if (!item.link) continue;
 
       const rawTitle = item.title || "";
-      const headline = rawTitle.replace(/\s*-\s*[^-]+$/, "").trim() || rawTitle.trim();
-      const snippet = (item.contentSnippet || "").trim();
+      const sourceMatch = rawTitle.match(/\s*-\s*([^-]+)$/);
+      const sourceName =
+        task.sourceName || (sourceMatch ? sourceMatch[1].trim() : "Indian News");
+      const headline =
+        rawTitle.replace(/\s*-\s*[^-]+$/, "").trim() || rawTitle.trim();
+      const snippet = cleanHtmlText(item.contentSnippet || "");
+      const dt = parsePublishDateTime(item.pubDate);
 
-      const publishedDate = item.pubDate
-        ? new Date(item.pubDate).toISOString().split("T")[0]
-        : new Date().toISOString().split("T")[0];
-
-      if (fromDate && publishedDate < fromDate) continue;
-      if (toDate && publishedDate > toDate) continue;
-
-      const { isPolitical, category } = filterPoliticalArticle(headline, snippet);
-      if (!isPolitical) continue;
+      if (fromDate && dt.date < fromDate) continue;
+      if (toDate && dt.date > toDate) continue;
+      if (isNoiseArticle(headline, keyword)) continue;
 
       candidates.push({
         headline,
-        category,
-        source: source.name,
-        date: publishedDate,
-        googleUrl: item.link,
+        source: sourceName,
+        date: dt.date,
+        time: dt.time,
+        publishedAt: dt.publishedAt,
+        rawUrl: item.link,
+        isGoogleLink: true,
+        fromTargetedSearch: true,
         snippet,
       });
     }
-  } catch (err) {
-    console.error(`Failed to scrape ${source.name}: ${err.message}`);
+  } catch {
+    // Skip failed RSS query
   }
 
   return candidates;
 }
 
-// Decode each article's own URL individually (prevents URL mismatch) and fetch full body
-async function enrichArticlesWithFullText(candidates) {
-  if (candidates.length === 0) return [];
-
-  const enriched = [];
-  const fetchBatchSize = 5;
-
-  for (let i = 0; i < candidates.length; i += fetchBatchSize) {
-    const chunk = candidates.slice(i, i + fetchBatchSize);
-
-    const chunkResults = await Promise.all(
-      chunk.map(async (item) => {
-        let realUrl = item.googleUrl;
-
-        try {
-          const decoded = await decoder.decode(item.googleUrl);
-          if (decoded && decoded.status && decoded.decoded_url) {
-            realUrl = decoded.decoded_url;
-          }
-        } catch {
-          // Keep original link if decode fails
-        }
-
-        const fullBody = realUrl.includes("news.google.com")
-          ? ""
-          : await fetchArticleBody(realUrl);
-
-        const content = fullBody || item.snippet || item.headline;
-        const location = extractLocation(item.headline, content);
-
-        return {
-          headline: item.headline,
-          state: location.state,
-          city: location.city,
-          category: item.category,
-          source: item.source,
-          date: item.date,
-          url: realUrl,
-          content,
-        };
-      })
-    );
-
-    enriched.push(...chunkResults);
-  }
-
-  return enriched;
-}
-
 export async function scrapeIndianNews(options = {}) {
-  const { sources = [] } = options;
+  const {
+    sources = [],
+    topic = "all",
+    fromDate = "",
+    toDate = "",
+    state = "",
+    city = "",
+    keyword = "",
+    allStatesSweep = true,
+    maxArticles = 60,
+  } = options;
 
   const targetSources =
     sources.length > 0
       ? NEWS_SOURCES.filter((s) => sources.includes(s.id))
       : NEWS_SOURCES;
 
-  const allCandidates = [];
-  const seenUrls = new Set();
+  const today = todayStr();
+  const includesRecent = !toDate || toDate >= addDays(today, -2);
 
-  const batchSize = 3;
-  for (let i = 0; i < targetSources.length; i += batchSize) {
-    const batch = targetSources.slice(i, i + batchSize);
-    const batchResults = await Promise.all(
-      batch.map((source) => scrapeSingleSource(source, options))
-    );
+  const rssTasks = [];
 
-    for (const sourceCandidates of batchResults) {
-      for (const candidate of sourceCandidates) {
-        if (!seenUrls.has(candidate.googleUrl)) {
-          seenUrls.add(candidate.googleUrl);
-          allCandidates.push(candidate);
-        }
+  for (const source of targetSources) {
+    if (includesRecent && !keyword.trim() && Array.isArray(source.rssFeeds)) {
+      for (const feedUrl of source.rssFeeds) {
+        rssTasks.push({
+          type: "direct",
+          url: feedUrl,
+          sourceName: source.name,
+        });
       }
     }
 
-    if (i + batchSize < targetSources.length) {
-      await delay(500);
+    rssTasks.push({
+      type: "google",
+      url: buildGoogleNewsUrl({
+        domain: source.domain,
+        topic,
+        fromDate,
+        toDate,
+        state,
+        city,
+        keyword,
+      }),
+      sourceName: source.name,
+    });
+  }
+
+  if (state && state !== "National") {
+    rssTasks.push({
+      type: "google",
+      url: buildGoogleNewsUrl({
+        topic,
+        fromDate,
+        toDate,
+        state,
+        city,
+        keyword,
+      }),
+      sourceName: "",
+    });
+  } else if (allStatesSweep && !keyword.trim()) {
+    for (const region of INDIA_REGIONS) {
+      rssTasks.push({
+        type: "google",
+        url: buildGoogleNewsUrl({
+          topic,
+          fromDate,
+          toDate,
+          keyword,
+          regionQuery: region.query,
+        }),
+        sourceName: "",
+      });
     }
   }
 
-  return await enrichArticlesWithFullText(allCandidates);
+  const taskResults = await runWithConcurrency(rssTasks, 10, (task) =>
+    task.type === "direct"
+      ? fetchDirectRssFeed(task.url, task.sourceName, {
+          fromDate,
+          toDate,
+          state,
+          city,
+          keyword,
+          limitPerFeed: 10,
+        })
+      : fetchGoogleRssTask(task, {
+          fromDate,
+          toDate,
+          keyword,
+          limitPerSource: 12,
+        })
+  );
+
+  const allCandidates = [];
+  const seenKeys = new Set();
+
+  for (const list of taskResults) {
+    if (!Array.isArray(list)) continue;
+    for (const candidate of list) {
+      const key = `${candidate.headline.toLowerCase().slice(0, 65)}|${candidate.date}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        allCandidates.push(candidate);
+      }
+    }
+  }
+
+  const archived = loadArchivedArticles({ fromDate, toDate });
+  const archivedMap = new Map(
+    archived.map((a) => [
+      `${a.headline.toLowerCase().slice(0, 65)}|${a.date}`,
+      a,
+    ])
+  );
+
+  const reusedArticles = [];
+  const toFetch = [];
+
+  for (const candidate of allCandidates) {
+    const key = `${candidate.headline.toLowerCase().slice(0, 65)}|${candidate.date}`;
+    const existing = archivedMap.get(key);
+
+    if (existing && existing.time) {
+      const cleanedContent = cleanHtmlText(existing.content);
+      const check = classifyArticle(existing.headline, cleanedContent, {
+        selectedTopic: topic,
+        keyword,
+        fromTargetedSearch: candidate.fromTargetedSearch,
+      });
+      if (
+        check.isRelevant &&
+        (!state ||
+          state === "National" ||
+          matchesRequestedState(existing.headline, cleanedContent, state))
+      ) {
+        reusedArticles.push({
+          ...existing,
+          content: cleanedContent,
+          state: state && state !== "National" ? state : existing.state,
+          topicId: check.topicId,
+          category: check.topicLabel,
+        });
+      }
+    } else {
+      toFetch.push(candidate);
+    }
+  }
+
+  // Always prioritize newest articles before slicing maxArticles
+  toFetch.sort((a, b) =>
+    (b.publishedAt || b.date).localeCompare(a.publishedAt || a.date)
+  );
+
+  const batchToEnrich = toFetch.slice(0, maxArticles);
+
+  const newlyEnriched = (
+    await runWithConcurrency(batchToEnrich, 15, async (item) => {
+      let realUrl = item.rawUrl;
+
+      if (item.isGoogleLink) {
+        try {
+          const decoded = await decoder.decode(item.rawUrl);
+          if (decoded && decoded.status && decoded.decoded_url) {
+            realUrl = decoded.decoded_url;
+          }
+        } catch {
+          // Keep original link if decode fails
+        }
+      }
+
+      const fullBody = realUrl.includes("news.google.com")
+        ? ""
+        : await fetchArticleBody(realUrl);
+
+      const content = cleanHtmlText(fullBody || item.snippet || item.headline);
+
+      const classification = classifyArticle(item.headline, content, {
+        selectedTopic: topic,
+        keyword,
+        fromTargetedSearch: item.fromTargetedSearch,
+      });
+      if (!classification.isRelevant) return null;
+
+      const location = extractLocation(item.headline, content);
+      let finalState = location.state;
+      let finalCity = location.city;
+
+      if (state && state !== "National") {
+        if (!matchesRequestedState(item.headline, content, state)) {
+          return null;
+        }
+        finalState = state;
+        if (city) {
+          finalCity = city;
+        } else if (location.state !== state) {
+          finalCity = INDIA_LOCATIONS[state]?.[0] || state;
+        }
+      }
+
+      return {
+        headline: item.headline,
+        state: finalState,
+        city: finalCity,
+        topicId: classification.topicId,
+        category: classification.topicLabel,
+        source: item.source,
+        date: item.date,
+        time: item.time,
+        publishedAt: item.publishedAt,
+        url: realUrl,
+        content,
+      };
+    })
+  ).filter(Boolean);
+
+  if (newlyEnriched.length > 0) {
+    saveArticlesToArchive(newlyEnriched);
+  }
+
+  return [...newlyEnriched, ...reusedArticles];
 }

@@ -1,0 +1,92 @@
+{
+  "topics": [
+    {
+      "id": "governance",
+      "label": "Politics & Governance",
+      "searchQuery": "(government OR cabinet OR parliament OR assembly OR BJP OR Congress OR CM OR policy)",
+      "keywords": [
+        "government", "cabinet", "parliament", "lok sabha", "rajya sabha", "assembly",
+        "vidhan sabha", "chief minister", "prime minister", "minister", "governor",
+        "policy", "bill", "ordinance", "bjp", "congress", "aap", "tmc", "dmk",
+        "election", "opposition", "governance", "administration", "panchayat", "municipality",
+        "mla", "mp", "cm", "pm", "politician", "party"
+      ]
+    },
+    {
+      "id": "health",
+      "label": "Health & Healthcare",
+      "searchQuery": "(health OR hospital OR AIIMS OR medical OR doctor OR vaccine OR healthcare)",
+      "keywords": [
+        "health", "healthcare", "hospital", "aiims", "pgi", "medical", "doctor", "doctors",
+        "clinic", "vaccine", "vaccination", "disease", "outbreak", "dengue", "malaria",
+        "tuberculosis", "cancer", "mental health", "nutrition", "ayushman", "icmr",
+        "pharmacy", "medicine", "patient", "public health", "sanitation", "epidemic"
+      ]
+    },
+    {
+      "id": "education",
+      "label": "Education & Research",
+      "searchQuery": "(education OR school OR university OR IIT OR NEET OR UGC OR CBSE OR college)",
+      "keywords": [
+        "education", "school", "schools", "university", "college", "iit", "iim", "nit",
+        "ugc", "cbse", "ncert", "neet", "jee", "upsc", "exam", "examination", "student",
+        "students", "teacher", "teachers", "curriculum", "scholarship", "literacy",
+        "higher education", "research", "campus", "nep", "admission", "faculty"
+      ]
+    },
+    {
+      "id": "economy",
+      "label": "Economy & Agriculture",
+      "searchQuery": "(economy OR RBI OR budget OR inflation OR farmer OR agriculture OR MSP OR GST)",
+      "keywords": [
+        "economy", "economic", "rbi", "budget", "inflation", "gdp", "gst", "tax",
+        "farmer", "farmers", "agriculture", "crop", "msp", "mandi", "irrigation",
+        "employment", "unemployment", "jobs", "msme", "startup", "export", "import",
+        "manufacturing", "banking", "fiscal", "trade", "industry"
+      ]
+    },
+    {
+      "id": "infrastructure",
+      "label": "Infrastructure & Environment",
+      "searchQuery": "(infrastructure OR highway OR railway OR metro OR pollution OR AQI OR solar OR water)",
+      "keywords": [
+        "infrastructure", "highway", "expressway", "railway", "railways", "metro",
+        "airport", "smart city", "housing", "water supply", "electricity", "power grid",
+        "renewable", "solar", "climate", "pollution", "aqi", "air quality", "forest",
+        "wildlife", "river", "flood", "drought", "environment", "green energy"
+      ]
+    },
+    {
+      "id": "judiciary",
+      "label": "Judiciary & Law",
+      "searchQuery": "(\"Supreme Court\" OR \"High Court\" OR constitution OR tribunal OR judgment)",
+      "keywords": [
+        "supreme court", "high court", "constitution", "constitutional", "bench",
+        "chief justice", "tribunal", "pil", "public interest", "verdict",
+        "judgment", "legislation", "fundamental rights", "legal reform", "law commission"
+      ]
+    },
+    {
+      "id": "welfare",
+      "label": "Social Welfare & Civic",
+      "searchQuery": "(welfare OR pension OR ration OR rural OR tribal OR civic OR subsidy OR scheme)",
+      "keywords": [
+        "welfare", "pension", "ration", "pds", "subsidy", "rural development",
+        "urban development", "women empowerment", "child welfare", "tribal",
+        "poverty", "civic", "municipal", "scheme", "beneficiary", "mgnrega", "housing scheme"
+      ]
+    }
+  ],
+  "excludeNoise": [
+    "cricket", "ipl", "bcci", "icc", "t20", "odi", "test match", "world cup",
+    "wicket", "innings", "batsman", "bowler", "virat kohli", "rohit sharma", "dhoni",
+    "football", "fifa", "tennis", "wimbledon", "badminton", "olympics",
+    "bollywood", "tollywood", "kollywood", "hollywood", "box office", "movie review",
+    "film release", "trailer", "actress", "celebrity", "bigg boss", "web series",
+    "horoscope", "astrology", "recipe",
+    "murder", "murdered", "stabbed", "shot dead", "rape", "raped",
+    "sexual assault", "molested", "kidnapped", "abducted", "robbery", "looted",
+    "theft", "burglary", "snatching", "gangster", "gang war", "drug bust",
+    "narcotics", "smuggling", "suicide", "hit-and-run", "road accident", "homicide"
+  ]
+}

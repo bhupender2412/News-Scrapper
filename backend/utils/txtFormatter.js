@@ -1,7 +1,7 @@
 function createSummary(content = "", headline = "", minWords = 60, maxWords = 70) {
   let clean = content.replace(/\s+/g, " ").trim();
 
-  // Strip the headline if repeated at the start of the article
+  // Strip the headline if it is repeated at the start of the article body
   if (headline) {
     const cleanHeadline = headline.replace(/\s+/g, " ").trim();
     if (clean.toLowerCase().startsWith(cleanHeadline.toLowerCase())) {
@@ -18,7 +18,7 @@ function createSummary(content = "", headline = "", minWords = 60, maxWords = 70
     return words.join(" ");
   }
 
-  // Prefer ending on a complete sentence between 60 and 70 words
+  // Prefer ending at a complete sentence between 60 and 70 words
   const chunk = words.slice(0, maxWords).join(" ");
   const lastSentenceEnd = Math.max(
     chunk.lastIndexOf(". "),
@@ -33,7 +33,7 @@ function createSummary(content = "", headline = "", minWords = 60, maxWords = 70
     }
   }
 
-  // Fallback: cleanly cut at 65 words
+  // Fallback: cut cleanly at 65 words
   return `${words.slice(0, 65).join(" ").replace(/[.,;:\-]+$/, "")}...`;
 }
 
@@ -42,7 +42,7 @@ export function formatArticlesToTxt(articles = []) {
   const divider = "===================================================================";
 
   const lines = [
-    "INDIA POLITICAL & OPPOSITION NEWS REPORT",
+    "BALLOTIX NEWS SCRAPPER — INDIA HOLISTIC CIVIC & PUBLIC-INTEREST NEWS REPORT",
     `Generated On: ${today} | Total Verified Articles: ${articles.length}`,
     divider,
     "",
@@ -53,10 +53,12 @@ export function formatArticlesToTxt(articles = []) {
 
     lines.push(`[ARTICLE #${index + 1}]`);
     lines.push(`HEADLINE : ${article.headline}`);
+    lines.push(`TOPIC    : ${article.category || "General"}`);
     lines.push(`STATE    : ${article.state}`);
     lines.push(`CITY     : ${article.city}`);
-    lines.push(`CATEGORY : ${article.category}`);
-    lines.push(`SOURCE   : ${article.source} | DATE: ${article.date}`);
+    lines.push(
+      `SOURCE   : ${article.source} | DATE: ${article.date} | TIME: ${article.time || "N/A"}`
+    );
     lines.push(`URL      : ${article.url} | SUMMARY: ${summary}`);
     lines.push("CONTENT  :");
     lines.push(article.content);
