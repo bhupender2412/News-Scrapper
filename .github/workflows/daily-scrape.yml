@@ -1,0 +1,45 @@
+name: Daily Ballotix Civic News Scrape
+
+on:
+  schedule:
+    # Runs twice daily: 03:00 UTC (8:30 AM IST) and 15:00 UTC (8:30 PM IST)
+    - cron: "0 3,15 * * *"
+  workflow_dispatch: # Allows manual one-click run from GitHub Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  scrape-and-archive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run daily news scraper
+        working-directory: backend
+        run: node scripts/dailyAutoScrape.js
+
+      - name: Commit and push updated archives
+        run: |
+          git config user.name "ballotix-bot"
+          git config user.email "actions@github.com"
+          git add backend/archive/*.json
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(archive): daily automated news update ($(date -u +'%Y-%m-%d'))"
+            git push
+          else
+            echo "No new articles to commit."
+          fi
