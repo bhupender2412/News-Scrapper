@@ -6,6 +6,13 @@ function escapeCsv(value = "") {
   return str;
 }
 
+// Keep ISO dates as plain text in Excel so default column widths never overflow into "########"
+function formatExcelDate(dateStr = "") {
+  const clean = String(dateStr).trim();
+  if (!clean) return "";
+  return `="${clean.replace(/"/g, '""')}"`;
+}
+
 export function formatArticlesToCsv(articles = []) {
   const headers = [
     "Headline",
@@ -21,19 +28,18 @@ export function formatArticlesToCsv(articles = []) {
 
   const rows = articles.map((article) =>
     [
-      article.headline,
-      article.category || "General",
-      article.state,
-      article.city,
-      article.source,
-      article.date,
-      article.time || "N/A",
-      article.url,
-      article.content,
-    ]
-      .map(escapeCsv)
-      .join(",")
+      escapeCsv(article.headline),
+      escapeCsv(article.category || "General"),
+      escapeCsv(article.state),
+      escapeCsv(article.city),
+      escapeCsv(article.source),
+      formatExcelDate(article.date),
+      escapeCsv(article.time || "N/A"),
+      escapeCsv(article.url),
+      escapeCsv(article.content),
+    ].join(",")
   );
 
-  return [headers.join(","), ...rows].join("\n");
+  // Prefix UTF-8 BOM (\uFEFF) so Excel displays ₹, ’, “, and – cleanly
+  return `\uFEFF${[headers.join(","), ...rows].join("\n")}`;
 }

@@ -16,6 +16,10 @@ function getDateFilePath(dateStr) {
   return path.join(ARCHIVE_DIR, `${safeDate}.json`);
 }
 
+function makeHeadlineKey(headline = "") {
+  return String(headline).toLowerCase().replace(/\s+/g, " ").trim().slice(0, 65);
+}
+
 // Save articles grouped by their publication date (YYYY-MM-DD)
 export function saveArticlesToArchive(articles = []) {
   ensureArchiveDir();
@@ -40,16 +44,24 @@ export function saveArticlesToArchive(articles = []) {
     }
 
     const seenUrls = new Set(existing.map((a) => a.url));
+    const seenHeadlines = new Set(existing.map((a) => makeHeadlineKey(a.headline)));
     const merged = [...existing];
+    let addedCount = 0;
 
     for (const item of newItems) {
-      if (item.url && !seenUrls.has(item.url)) {
+      const hKey = makeHeadlineKey(item.headline);
+      if (item.url && !seenUrls.has(item.url) && !seenHeadlines.has(hKey)) {
         seenUrls.add(item.url);
+        seenHeadlines.add(hKey);
         merged.push(item);
+        addedCount++;
       }
     }
 
-    fs.writeFileSync(filePath, JSON.stringify(merged, null, 2), "utf-8");
+    // Only write to disk if brand-new articles were actually added
+    if (addedCount > 0) {
+      fs.writeFileSync(filePath, JSON.stringify(merged, null, 2), "utf-8");
+    }
   }
 }
 

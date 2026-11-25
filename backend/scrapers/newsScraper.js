@@ -8,7 +8,10 @@ import {
   getTopicSearchQuery,
   isNoiseArticle,
 } from "../utils/topicFilter.js";
-import { extractLocation } from "../utils/locationExtractor.js";
+import {
+  extractLocation,
+  isCityInState,
+} from "../utils/locationExtractor.js";
 import {
   loadArchivedArticles,
   saveArticlesToArchive,
@@ -119,6 +122,55 @@ function addDays(dateStr, days) {
   return date.toISOString().split("T")[0];
 }
 
+function chunkArray(arr = [], size = 4) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function normalizeFeedEntry(feedEntry) {
+  if (typeof feedEntry === "string") {
+    return { url: feedEntry, states: [] };
+  }
+  return {
+    url: feedEntry?.url || "",
+    states: Array.isArray(feedEntry?.states) ? feedEntry.states : [],
+  };
+}
+
+function selectDirectFeedsForSources(targetSources, state = "", includeAllRegional = false) {
+  const selected = [];
+
+  for (const source of targetSources) {
+    if (!Array.isArray(source.rssFeeds)) continue;
+
+    for (const rawFeed of source.rssFeeds) {
+      const feed = normalizeFeedEntry(rawFeed);
+      if (!feed.url) continue;
+
+      if (state && state !== "National") {
+        if (feed.states.length === 0 || feed.states.includes(state)) {
+          selected.push({
+            url: feed.url,
+            sourceName: source.name,
+            feedStates: feed.states,
+          });
+        }
+      } else if (includeAllRegional || feed.states.length === 0) {
+        selected.push({
+          url: feed.url,
+          sourceName: source.name,
+          feedStates: feed.states,
+        });
+      }
+    }
+  }
+
+  return selected;
+}
+
 function buildGoogleNewsUrl({
   domain = "",
   topic = "all",
@@ -127,7 +179,7 @@ function buildGoogleNewsUrl({
   state = "",
   city = "",
   keyword = "",
-  regionQuery = "",
+  locationClause = "",
 }) {
   const queryParts = [];
 
@@ -139,10 +191,14 @@ function buildGoogleNewsUrl({
     queryParts.push(getTopicSearchQuery(topic));
   }
 
-  if (regionQuery) {
-    queryParts.push(regionQuery);
+  if (locationClause) {
+    queryParts.push(locationClause);
   } else if (city && city.trim()) {
-    queryParts.push(`"${city.trim()}"`);
+    if (state && state.trim() && state !== "National" && city.toLowerCase() !== state.toLowerCase()) {
+      queryParts.push(`"${city.trim()}" "${state.trim()}"`);
+    } else {
+      queryParts.push(`"${city.trim()}"`);
+    }
   } else if (state && state.trim() && state !== "National") {
     queryParts.push(`"${state.trim()}"`);
   }
@@ -155,7 +211,6 @@ function buildGoogleNewsUrl({
     if (fromDate) queryParts.push(`after:${addDays(fromDate, -1)}`);
     if (toDate) queryParts.push(`before:${addDays(toDate, 1)}`);
   } else if (!keyword || !keyword.trim()) {
-    // Prevent random 2-3 year old articles during general "All Time" browsing
     queryParts.push("when:30d");
   }
 
@@ -163,20 +218,16 @@ function buildGoogleNewsUrl({
   return `https://news.google.com/rss/search?q=${encodedQuery}&hl=en-IN&gl=IN&ceid=IN:en`;
 }
 
+// Strictly verifies that an article belongs to the requested Indian state
 function matchesRequestedState(headline, content, targetState) {
   if (!targetState || targetState === "National") return true;
-  const combined = `${headline} ${content}`.toLowerCase();
-  if (combined.includes(targetState.toLowerCase())) return true;
-
-  const cities = INDIA_LOCATIONS[targetState] || [];
-  return cities.some((city) => combined.includes(city.toLowerCase()));
+  const resolved = extractLocation(headline, content, targetState);
+  return resolved.state.toLowerCase() === targetState.toLowerCase();
 }
 
 function cleanHtmlText(raw = "") {
   if (!raw) return "";
-  // Pass 1: decode escaped entities (&lt;p&gt; -> <p>, &amp;nbsp; -> &nbsp;)
   const decoded = cheerio.load(`<div>${raw}</div>`)("div").text();
-  // Pass 2: add spacing at block tags and strip HTML tags
   const withSpaces = decoded.replace(/<\/(p|div|br|li)>/gi, " ");
   const stripped = cheerio.load(`<div>${withSpaces}</div>`)("div").text();
   return stripped.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
@@ -247,11 +298,11 @@ async function fetchViaReaderFallback(realUrl) {
   }
 }
 
-async function fetchArticleBody(realUrl) {
+async function fetchArticleBody(realUrl, timeoutMs = 4000) {
   try {
     const { data: html } = await axios.get(realUrl, {
       headers: BROWSER_HEADERS,
-      timeout: 4000,
+      timeout: timeoutMs,
       maxRedirects: 4,
     });
 
@@ -290,19 +341,19 @@ async function fetchArticleBody(realUrl) {
   return await fetchViaReaderFallback(realUrl);
 }
 
-async function fetchDirectRssFeed(feedUrl, sourceName, options) {
+async function fetchDirectRssFeed(feedObj, options) {
   const {
     fromDate = "",
     toDate = "",
     state = "",
     city = "",
     keyword = "",
-    limitPerFeed = 12,
+    limitPerFeed = 25,
   } = options;
   const candidates = [];
 
   try {
-    const { data: xml } = await axios.get(feedUrl, {
+    const { data: xml } = await axios.get(feedObj.url, {
       headers: BROWSER_HEADERS,
       timeout: 5000,
     });
@@ -321,9 +372,24 @@ async function fetchDirectRssFeed(feedUrl, sourceName, options) {
       if (toDate && dt.date > toDate) continue;
       if (isNoiseArticle(headline, keyword)) continue;
 
-      if (state && !matchesRequestedState(headline, snippet, state)) continue;
+      const feedLockedToTargetState =
+        state &&
+        Array.isArray(feedObj.feedStates) &&
+        feedObj.feedStates.length === 1 &&
+        feedObj.feedStates[0] === state;
+
+      if (
+        state &&
+        state !== "National" &&
+        !feedLockedToTargetState &&
+        !matchesRequestedState(headline, snippet, state)
+      ) {
+        continue;
+      }
+
       if (
         city &&
+        city !== "State-Wide" &&
         !`${headline} ${snippet}`.toLowerCase().includes(city.toLowerCase())
       ) {
         continue;
@@ -331,13 +397,14 @@ async function fetchDirectRssFeed(feedUrl, sourceName, options) {
 
       candidates.push({
         headline,
-        source: sourceName,
+        source: feedObj.sourceName,
         date: dt.date,
         time: dt.time,
         publishedAt: dt.publishedAt,
         rawUrl: item.link,
         isGoogleLink: false,
         fromTargetedSearch: false,
+        feedStates: feedObj.feedStates || [],
         snippet,
       });
     }
@@ -353,7 +420,7 @@ async function fetchGoogleRssTask(task, options) {
     fromDate = "",
     toDate = "",
     keyword = "",
-    limitPerSource = 12,
+    limitPerSource = 20,
   } = options;
   const candidates = [];
 
@@ -391,6 +458,7 @@ async function fetchGoogleRssTask(task, options) {
         rawUrl: item.link,
         isGoogleLink: true,
         fromTargetedSearch: true,
+        hintCity: task.hintCity || "",
         snippet,
       });
     }
@@ -411,7 +479,7 @@ export async function scrapeIndianNews(options = {}) {
     city = "",
     keyword = "",
     allStatesSweep = true,
-    maxArticles = 60,
+    maxArticles = 150,
   } = options;
 
   const targetSources =
@@ -424,17 +492,23 @@ export async function scrapeIndianNews(options = {}) {
 
   const rssTasks = [];
 
-  for (const source of targetSources) {
-    if (includesRecent && !keyword.trim() && Array.isArray(source.rssFeeds)) {
-      for (const feedUrl of source.rssFeeds) {
-        rssTasks.push({
-          type: "direct",
-          url: feedUrl,
-          sourceName: source.name,
-        });
-      }
+  // 1. Direct RSS feeds
+  if (includesRecent && !keyword.trim()) {
+    const directFeeds = selectDirectFeedsForSources(
+      targetSources,
+      state,
+      allStatesSweep && !state
+    );
+    for (const feedObj of directFeeds) {
+      rssTasks.push({
+        type: "direct",
+        feedObj,
+      });
     }
+  }
 
+  // 2. Per-newspaper Google News queries
+  for (const source of targetSources) {
     rssTasks.push({
       type: "google",
       url: buildGoogleNewsUrl({
@@ -447,22 +521,76 @@ export async function scrapeIndianNews(options = {}) {
         keyword,
       }),
       sourceName: source.name,
+      hintCity: city || "",
     });
   }
 
+  // 3. State + City-Expanded Queries when a specific state is selected
   if (state && state !== "National") {
-    rssTasks.push({
-      type: "google",
-      url: buildGoogleNewsUrl({
-        topic,
-        fromDate,
-        toDate,
-        state,
-        city,
-        keyword,
-      }),
-      sourceName: "",
-    });
+    const stateCities = INDIA_LOCATIONS[state] || [];
+
+    if (city && city !== "State-Wide") {
+      rssTasks.push({
+        type: "google",
+        url: buildGoogleNewsUrl({
+          topic,
+          fromDate,
+          toDate,
+          state,
+          city,
+          keyword,
+        }),
+        sourceName: "",
+        hintCity: city,
+      });
+    } else {
+      rssTasks.push({
+        type: "google",
+        url: buildGoogleNewsUrl({
+          topic,
+          fromDate,
+          toDate,
+          state,
+          keyword,
+        }),
+        sourceName: "",
+        hintCity: "",
+      });
+
+      for (const majorCity of stateCities.slice(0, 6)) {
+        rssTasks.push({
+          type: "google",
+          url: buildGoogleNewsUrl({
+            topic,
+            fromDate,
+            toDate,
+            state,
+            city: majorCity,
+            keyword,
+          }),
+          sourceName: "",
+          hintCity: majorCity,
+        });
+      }
+
+      // Anchor batched city queries with the state name so shared city names (e.g. Bilaspur, Una) don't pull other states
+      const cityChunks = chunkArray(stateCities.slice(6), 2);
+      for (const group of cityChunks) {
+        const clause = `"${state}" (${group.map((c) => `"${c}"`).join(" OR ")})`;
+        rssTasks.push({
+          type: "google",
+          url: buildGoogleNewsUrl({
+            topic,
+            fromDate,
+            toDate,
+            keyword,
+            locationClause: clause,
+          }),
+          sourceName: "",
+          hintCity: group.length === 1 ? group[0] : "",
+        });
+      }
+    }
   } else if (allStatesSweep && !keyword.trim()) {
     for (const region of INDIA_REGIONS) {
       rssTasks.push({
@@ -472,28 +600,29 @@ export async function scrapeIndianNews(options = {}) {
           fromDate,
           toDate,
           keyword,
-          regionQuery: region.query,
+          locationClause: region.query,
         }),
         sourceName: "",
+        hintCity: "",
       });
     }
   }
 
-  const taskResults = await runWithConcurrency(rssTasks, 10, (task) =>
+  const taskResults = await runWithConcurrency(rssTasks, 12, (task) =>
     task.type === "direct"
-      ? fetchDirectRssFeed(task.url, task.sourceName, {
+      ? fetchDirectRssFeed(task.feedObj, {
           fromDate,
           toDate,
           state,
           city,
           keyword,
-          limitPerFeed: 10,
+          limitPerFeed: 25,
         })
       : fetchGoogleRssTask(task, {
           fromDate,
           toDate,
           keyword,
-          limitPerSource: 12,
+          limitPerSource: 20,
         })
   );
 
@@ -521,6 +650,7 @@ export async function scrapeIndianNews(options = {}) {
 
   const reusedArticles = [];
   const toFetch = [];
+  let droppedByFilter = 0;
 
   for (const candidate of allCandidates) {
     const key = `${candidate.headline.toLowerCase().slice(0, 65)}|${candidate.date}`;
@@ -533,16 +663,60 @@ export async function scrapeIndianNews(options = {}) {
         keyword,
         fromTargetedSearch: candidate.fromTargetedSearch,
       });
-      if (
-        check.isRelevant &&
-        (!state ||
-          state === "National" ||
-          matchesRequestedState(existing.headline, cleanedContent, state))
-      ) {
+
+      if (!check.isRelevant) {
+        droppedByFilter++;
+        continue;
+      }
+
+      const loc = extractLocation(existing.headline, cleanedContent, state);
+
+      if (state && state !== "National") {
+        const lockedByFeed =
+          Array.isArray(candidate.feedStates) &&
+          candidate.feedStates.length === 1 &&
+          candidate.feedStates[0] === state;
+
+        if (!lockedByFeed && loc.state.toLowerCase() !== state.toLowerCase()) {
+          droppedByFilter++;
+          continue;
+        }
+
+        let resolvedCity = "State-Wide";
+        if (city && city !== "State-Wide") {
+          resolvedCity = city;
+        } else if (loc.state.toLowerCase() === state.toLowerCase() && isCityInState(loc.city, state)) {
+          resolvedCity = loc.city;
+        } else if (isCityInState(existing.city, state)) {
+          resolvedCity = existing.city;
+        } else if (isCityInState(candidate.hintCity, state)) {
+          resolvedCity = candidate.hintCity;
+        }
+
+        if (
+          city &&
+          city !== "State-Wide" &&
+          resolvedCity.toLowerCase() !== city.toLowerCase() &&
+          !`${existing.headline} ${cleanedContent}`.toLowerCase().includes(city.toLowerCase())
+        ) {
+          droppedByFilter++;
+          continue;
+        }
+
         reusedArticles.push({
           ...existing,
           content: cleanedContent,
-          state: state && state !== "National" ? state : existing.state,
+          state,
+          city: resolvedCity,
+          topicId: check.topicId,
+          category: check.topicLabel,
+        });
+      } else {
+        reusedArticles.push({
+          ...existing,
+          content: cleanedContent,
+          state: loc.state,
+          city: loc.city || existing.city || "State-Wide",
           topicId: check.topicId,
           category: check.topicLabel,
         });
@@ -552,7 +726,6 @@ export async function scrapeIndianNews(options = {}) {
     }
   }
 
-  // Always prioritize newest articles before slicing maxArticles
   toFetch.sort((a, b) =>
     (b.publishedAt || b.date).localeCompare(a.publishedAt || a.date)
   );
@@ -585,21 +758,38 @@ export async function scrapeIndianNews(options = {}) {
         keyword,
         fromTargetedSearch: item.fromTargetedSearch,
       });
-      if (!classification.isRelevant) return null;
+      if (!classification.isRelevant) {
+        droppedByFilter++;
+        return null;
+      }
 
-      const location = extractLocation(item.headline, content);
+      const location = extractLocation(item.headline, content, state);
       let finalState = location.state;
       let finalCity = location.city;
 
       if (state && state !== "National") {
-        if (!matchesRequestedState(item.headline, content, state)) {
+        const lockedByFeed =
+          Array.isArray(item.feedStates) &&
+          item.feedStates.length === 1 &&
+          item.feedStates[0] === state;
+
+        if (!lockedByFeed && location.state.toLowerCase() !== state.toLowerCase()) {
+          droppedByFilter++;
           return null;
         }
+
         finalState = state;
-        if (city) {
+        if (city && city !== "State-Wide") {
           finalCity = city;
-        } else if (location.state !== state) {
-          finalCity = INDIA_LOCATIONS[state]?.[0] || state;
+        } else if (
+          location.state.toLowerCase() === state.toLowerCase() &&
+          isCityInState(location.city, state)
+        ) {
+          finalCity = location.city;
+        } else if (isCityInState(item.hintCity, state)) {
+          finalCity = item.hintCity;
+        } else {
+          finalCity = "State-Wide";
         }
       }
 
@@ -623,5 +813,145 @@ export async function scrapeIndianNews(options = {}) {
     saveArticlesToArchive(newlyEnriched);
   }
 
-  return [...newlyEnriched, ...reusedArticles];
+  return {
+    articles: [...newlyEnriched, ...reusedArticles],
+    stats: {
+      feedsQueried: rssTasks.length,
+      candidatesScanned: allCandidates.length,
+      reusedFromArchive: reusedArticles.length,
+      newlyExtracted: newlyEnriched.length,
+      droppedByFilter,
+      cappedRemaining: Math.max(0, toFetch.length - batchToEnrich.length),
+    },
+  };
+}
+
+export async function syncDirectRssFeeds(options = {}) {
+  const {
+    sources = [],
+    state = "",
+    city = "",
+    topic = "all",
+    limitPerFeed = 25,
+  } = options;
+
+  const targetSources =
+    sources.length > 0
+      ? NEWS_SOURCES.filter((s) => sources.includes(s.id))
+      : NEWS_SOURCES;
+
+  const feeds = selectDirectFeedsForSources(targetSources, state, true);
+
+  const feedResults = await runWithConcurrency(feeds, 12, (feedObj) =>
+    fetchDirectRssFeed(feedObj, {
+      state,
+      city,
+      limitPerFeed,
+    })
+  );
+
+  const seenKeys = new Set();
+  const candidates = [];
+
+  for (const list of feedResults) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const key = `${item.headline.toLowerCase().slice(0, 65)}|${item.date}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        candidates.push(item);
+      }
+    }
+  }
+
+  const today = todayStr();
+  const yesterday = addDays(today, -1);
+  const existingArchived = loadArchivedArticles({ fromDate: yesterday, toDate: today });
+  const existingKeys = new Set(
+    existingArchived.map(
+      (a) => `${a.headline.toLowerCase().slice(0, 65)}|${a.date}`
+    )
+  );
+
+  const syncedArticles = [];
+  const brandNewToSave = [];
+
+  for (const item of candidates) {
+    const content = cleanHtmlText(item.snippet || item.headline);
+    const classification = classifyArticle(item.headline, content, {
+      selectedTopic: topic,
+      fromTargetedSearch: false,
+    });
+    if (!classification.isRelevant) continue;
+
+    const location = extractLocation(item.headline, content, state);
+    const lockedByFeed =
+      Array.isArray(item.feedStates) &&
+      item.feedStates.length === 1 &&
+      item.feedStates[0] === state;
+
+    if (
+      state &&
+      state !== "National" &&
+      !lockedByFeed &&
+      location.state.toLowerCase() !== state.toLowerCase()
+    ) {
+      continue;
+    }
+
+    const finalState = state && state !== "National" ? state : location.state;
+    const finalCity =
+      city && city !== "State-Wide"
+        ? city
+        : location.state.toLowerCase() === finalState.toLowerCase() &&
+          isCityInState(location.city, finalState)
+        ? location.city
+        : "State-Wide";
+
+    const articleObj = {
+      headline: item.headline,
+      state: finalState,
+      city: finalCity,
+      topicId: classification.topicId,
+      category: classification.topicLabel,
+      source: item.source,
+      date: item.date,
+      time: item.time,
+      publishedAt: item.publishedAt,
+      url: item.rawUrl,
+      content,
+    };
+
+    syncedArticles.push(articleObj);
+
+    const key = `${item.headline.toLowerCase().slice(0, 65)}|${item.date}`;
+    if (!existingKeys.has(key)) {
+      existingKeys.add(key);
+      brandNewToSave.push(articleObj);
+    }
+  }
+
+  const enrichedNew = (
+    await runWithConcurrency(brandNewToSave.slice(0, 10), 10, async (art) => {
+      const fullBody = await fetchArticleBody(art.url, 2500);
+      return fullBody ? { ...art, content: cleanHtmlText(fullBody) } : art;
+    })
+  ).filter(Boolean);
+
+  if (enrichedNew.length > 0) {
+    saveArticlesToArchive(enrichedNew);
+  }
+
+  const enrichedByUrl = new Map(enrichedNew.map((a) => [a.url, a]));
+  const finalArticles = syncedArticles
+    .map((a) => enrichedByUrl.get(a.url) || a)
+    .sort((a, b) =>
+      (b.publishedAt || b.date).localeCompare(a.publishedAt || a.date)
+    );
+
+  return {
+    articles: finalArticles,
+    newCount: brandNewToSave.length,
+    syncedAt: parsePublishDateTime(new Date()).time,
+  };
 }

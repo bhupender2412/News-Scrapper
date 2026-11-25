@@ -1,7 +1,11 @@
 import express from "express";
 import cors from "cors";
 import fs from "fs";
-import { NEWS_SOURCES, scrapeIndianNews } from "./scrapers/newsScraper.js";
+import {
+  NEWS_SOURCES,
+  scrapeIndianNews,
+  syncDirectRssFeeds,
+} from "./scrapers/newsScraper.js";
 import { getTopicsList } from "./utils/topicFilter.js";
 import { formatArticlesToTxt } from "./utils/txtFormatter.js";
 import { formatArticlesToCsv } from "./utils/csvFormatter.js";
@@ -20,6 +24,18 @@ const locationsPath = new URL("./data/indiaLocations.json", import.meta.url);
 const indiaLocations = JSON.parse(fs.readFileSync(locationsPath, "utf-8"));
 
 let latestArticles = [];
+
+function computeCityBreakdown(articles = []) {
+  const counts = {};
+  for (const art of articles) {
+    const cityKey = art.city || "State-Wide";
+    counts[cityKey] = (counts[cityKey] || 0) + 1;
+  }
+
+  return Object.fromEntries(
+    Object.entries(counts).sort((a, b) => b[1] - a[1])
+  );
+}
 
 app.get("/api/locations", (req, res) => {
   res.json(indiaLocations);
@@ -40,11 +56,15 @@ app.get("/api/archive/dates", (req, res) => {
 app.get("/api/archive/:date", (req, res) => {
   const { date } = req.params;
   const articles = loadArchivedArticles({ fromDate: date, toDate: date });
+  articles.sort((a, b) =>
+    (b.publishedAt || b.date).localeCompare(a.publishedAt || a.date)
+  );
   latestArticles = articles;
   res.json({
     success: true,
     date,
     count: articles.length,
+    cityBreakdown: computeCityBreakdown(articles),
     articles,
   });
 });
@@ -62,7 +82,7 @@ app.post("/api/scrape", async (req, res) => {
       allStatesSweep = true,
     } = req.body || {};
 
-    const scraped = await scrapeIndianNews({
+    const { articles: scraped, stats } = await scrapeIndianNews({
       sources,
       topic,
       fromDate,
@@ -73,7 +93,6 @@ app.post("/api/scrape", async (req, res) => {
       allStatesSweep,
     });
 
-    // Sort by exact publication timestamp (newest first)
     scraped.sort((a, b) =>
       (b.publishedAt || b.date).localeCompare(a.publishedAt || a.date)
     );
@@ -82,6 +101,8 @@ app.post("/api/scrape", async (req, res) => {
     res.json({
       success: true,
       count: scraped.length,
+      stats,
+      cityBreakdown: computeCityBreakdown(scraped),
       articles: scraped,
     });
   } catch (err) {
@@ -89,6 +110,44 @@ app.post("/api/scrape", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to scrape news articles.",
+    });
+  }
+});
+
+// Fast live RSS sync endpoint (checks direct Tribune & daily RSS feeds in ~2-4 seconds)
+app.post("/api/rss-live", async (req, res) => {
+  try {
+    const {
+      sources = [],
+      state = "",
+      city = "",
+      topic = "all",
+    } = req.body || {};
+
+    const result = await syncDirectRssFeeds({
+      sources,
+      state,
+      city,
+      topic,
+    });
+
+    if (result.articles.length > 0) {
+      latestArticles = result.articles;
+    }
+
+    res.json({
+      success: true,
+      count: result.articles.length,
+      newCount: result.newCount,
+      syncedAt: result.syncedAt,
+      cityBreakdown: computeCityBreakdown(result.articles),
+      articles: result.articles,
+    });
+  } catch (err) {
+    console.error("Live RSS sync error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to sync live RSS feeds.",
     });
   }
 });
@@ -121,25 +180,22 @@ app.post("/api/export-csv", (req, res) => {
   res.send(csvContent);
 });
 
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+// Automatic 15-minute live RSS poller for continuous daily archiving
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
-async function runDailyAutoScrape() {
-  const today = new Date().toISOString().split("T")[0];
-  console.log(`[Auto-Scrape] Collecting holistic Pan-India news for ${today}...`);
+async function runLiveRssPoller() {
   try {
-    const items = await scrapeIndianNews({
-      topic: "all",
-      fromDate: today,
-      toDate: today,
-      allStatesSweep: true,
-    });
-    console.log(`[Auto-Scrape] Archived ${items.length} articles for ${today}.`);
+    const { newCount, syncedAt } = await syncDirectRssFeeds({ topic: "all" });
+    if (newCount > 0) {
+      console.log(`[Live-RSS] Archived ${newCount} new civic articles at ${syncedAt}.`);
+    }
   } catch (err) {
-    console.error(`[Auto-Scrape] Failed: ${err.message}`);
+    console.error(`[Live-RSS] Poll error: ${err.message}`);
   }
 }
 
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
-  setInterval(runDailyAutoScrape, SIX_HOURS_MS);
+  setTimeout(runLiveRssPoller, 5000);
+  setInterval(runLiveRssPoller, FIFTEEN_MINUTES_MS);
 });

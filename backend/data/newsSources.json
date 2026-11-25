@@ -4,21 +4,26 @@
     "name": "The Tribune",
     "domain": "tribuneindia.com",
     "rssFeeds": [
-      "https://www.tribuneindia.com/rss/feed?catId=1",
-      "https://www.tribuneindia.com/rss/feed?catId=2",
-      "https://www.tribuneindia.com/rss/feed?catId=3",
-      "https://www.tribuneindia.com/rss/feed?catId=4",
-      "https://www.tribuneindia.com/rss/feed?catId=5",
-      "https://www.tribuneindia.com/rss/feed?catId=6"
+      { "url": "https://publish.tribuneindia.com/newscategory/nation/feed/", "states": [] },
+      { "url": "https://publish.tribuneindia.com/state/punjab/feed/", "states": ["Punjab"] },
+      { "url": "https://publish.tribuneindia.com/state/haryana/feed/", "states": ["Haryana"] },
+      { "url": "https://publish.tribuneindia.com/state/himachal/feed/", "states": ["Himachal Pradesh"] },
+      { "url": "https://publish.tribuneindia.com/state/chandigarh/feed/", "states": ["Chandigarh", "Punjab", "Haryana"] },
+      { "url": "https://publish.tribuneindia.com/state/jammu-kashmir/feed/", "states": ["Jammu and Kashmir"] },
+      { "url": "https://publish.tribuneindia.com/state/delhi/feed/", "states": ["Delhi"] },
+      { "url": "https://publish.tribuneindia.com/state/rajasthan/feed/", "states": ["Rajasthan"] },
+      { "url": "https://publish.tribuneindia.com/state/uttar-pradesh/feed/", "states": ["Uttar Pradesh"] },
+      { "url": "https://publish.tribuneindia.com/city/amritsar/feed/", "states": ["Punjab"] },
+      { "url": "https://publish.tribuneindia.com/city/patiala/feed/", "states": ["Punjab"] }
     ]
   },
   {
-    "id": "hindu",
+    "id": "thehindu",
     "name": "The Hindu",
     "domain": "thehindu.com",
     "rssFeeds": [
-      "https://www.thehindu.com/news/national/feeder/default.rss",
-      "https://www.thehindu.com/news/states/feeder/default.rss"
+      { "url": "https://www.thehindu.com/news/national/feeder/default.rss", "states": [] },
+      { "url": "https://www.thehindu.com/news/states/feeder/default.rss", "states": [] }
     ]
   },
   {
@@ -26,24 +31,29 @@
     "name": "The Indian Express",
     "domain": "indianexpress.com",
     "rssFeeds": [
-      "https://indianexpress.com/section/india/feed/",
-      "https://indianexpress.com/section/political-pulse/feed/"
+      { "url": "https://indianexpress.com/section/india/feed/", "states": [] },
+      { "url": "https://indianexpress.com/section/political-pulse/feed/", "states": [] },
+      { "url": "https://indianexpress.com/section/cities/chandigarh/feed/", "states": ["Chandigarh", "Punjab", "Haryana"] },
+      { "url": "https://indianexpress.com/section/cities/delhi/feed/", "states": ["Delhi"] }
     ]
   },
   {
-    "id": "toi",
-    "name": "The Times of India",
-    "domain": "timesofindia.indiatimes.com",
-    "rssFeeds": [
-      "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms"
-    ]
-  },
-  {
-    "id": "ht",
+    "id": "hindustantimes",
     "name": "Hindustan Times",
     "domain": "hindustantimes.com",
     "rssFeeds": [
-      "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml"
+      { "url": "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml", "states": [] },
+      { "url": "https://www.hindustantimes.com/feeds/rss/cities/chandigarh-news/rssfeed.xml", "states": ["Chandigarh", "Punjab", "Haryana"] },
+      { "url": "https://www.hindustantimes.com/feeds/rss/cities/delhi-news/rssfeed.xml", "states": ["Delhi"] }
+    ]
+  },
+  {
+    "id": "timesofindia",
+    "name": "The Times of India",
+    "domain": "timesofindia.indiatimes.com",
+    "rssFeeds": [
+      { "url": "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms", "states": [] },
+      { "url": "https://timesofindia.indiatimes.com/rssfeeds/-2128816011.cms", "states": ["Chandigarh", "Punjab", "Haryana"] }
     ]
   },
   {
@@ -51,69 +61,56 @@
     "name": "Deccan Herald",
     "domain": "deccanherald.com",
     "rssFeeds": [
-      "https://www.deccanherald.com/rss-feed/national.xml"
+      { "url": "https://www.deccanherald.com/rss/india.rss", "states": [] },
+      { "url": "https://www.deccanherald.com/rss/state.rss", "states": ["Karnataka"] }
     ]
   },
   {
-    "id": "telegraph",
-    "name": "The Telegraph",
-    "domain": "telegraphindia.com",
-    "rssFeeds": []
-  },
-  {
-    "id": "newindianexpress",
-    "name": "The New Indian Express",
-    "domain": "newindianexpress.com",
+    "id": "ndtv",
+    "name": "NDTV",
+    "domain": "ndtv.com",
     "rssFeeds": [
-      "https://www.newindianexpress.com/nation/rssfeed/?id=170&getXmlFeed=true"
+      { "url": "https://feeds.feedburner.com/ndtvnews-india-news", "states": [] }
     ]
   },
   {
-    "id": "deccanchronicle",
-    "name": "Deccan Chronicle",
-    "domain": "deccanchronicle.com",
-    "rssFeeds": []
-  },
-  {
-    "id": "statesman",
-    "name": "The Statesman",
-    "domain": "thestatesman.com",
+    "id": "news18",
+    "name": "News18",
+    "domain": "news18.com",
     "rssFeeds": [
-      "https://www.thestatesman.com/india/feed"
+      { "url": "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml", "states": [] }
     ]
   },
   {
-    "id": "freepressjournal",
-    "name": "Free Press Journal",
-    "domain": "freepressjournal.in",
-    "rssFeeds": []
+    "id": "theprint",
+    "name": "ThePrint",
+    "domain": "theprint.in",
+    "rssFeeds": [
+      { "url": "https://theprint.in/feed/", "states": [] }
+    ]
+  },
+  {
+    "id": "livemint",
+    "name": "Mint",
+    "domain": "livemint.com",
+    "rssFeeds": [
+      { "url": "https://www.livemint.com/rss/news", "states": [] }
+    ]
   },
   {
     "id": "businessstandard",
     "name": "Business Standard",
     "domain": "business-standard.com",
     "rssFeeds": [
-      "https://www.business-standard.com/rss/politics-105.rss"
+      { "url": "https://www.business-standard.com/rss/home_page_top_stories.rss", "states": [] }
     ]
   },
   {
-    "id": "mint",
-    "name": "Mint",
-    "domain": "livemint.com",
+    "id": "telegraph",
+    "name": "The Telegraph",
+    "domain": "telegraphindia.com",
     "rssFeeds": [
-      "https://www.livemint.com/rss/politics"
+      { "url": "https://www.telegraphindia.com/rss.xml", "states": ["West Bengal"] }
     ]
-  },
-  {
-    "id": "pioneer",
-    "name": "The Pioneer",
-    "domain": "dailypioneer.com",
-    "rssFeeds": []
-  },
-  {
-    "id": "assamtribune",
-    "name": "The Assam Tribune",
-    "domain": "assamtribune.com",
-    "rssFeeds": []
   }
 ]
